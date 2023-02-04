@@ -1,17 +1,19 @@
 import socket
 import logging
-
-from time import sleep
+from secrets import token_hex
 from threading import Thread
 from sys import stdout
 from utils.Packer import Packer
 from playermulttypes.SendType import SendType
 from network.Connection import Connection
+from time import sleep
 
 from packet.Packet import Packet
-from packet.NameTransferPacket import NameTransferPacket
+from packet.HandshakeRequestPacket import HandshakeRequestPaket
+from packet.HandshakeAcceptedPacket import HandshakeAcceptedPaket
 
 BUFFER_SIZE = 2048
+PROTOCOL_VERSION = 1
 
 class PlayerMultServer:
     instance = None
@@ -41,12 +43,18 @@ class PlayerMultServer:
     def registerPackets(self):
         logging.info("Register Packets...")
 
-        Packet.registerPacket(0, NameTransferPacket)
+        Packet.registerPacket(1, HandshakeRequestPaket)
+        Packet.registerPacket(2, HandshakeAcceptedPaket)
 
         logging.info("Registered Packets...")
 
     def addConnection(self, connection: Connection):
         self.connections.append(connection)
+
+    def beginHandshake(self, connection, packet):
+        protocolVersion = Packer.readUnsingedShort(packet.data)
+        if protocolVersion == PROTOCOL_VERSION:
+            connection.socket.send(HandshakeAcceptedPaket(int(token_hex(4), 16)).serilize())
 
     def dataProcessing(self):
         while self.running:
@@ -54,8 +62,12 @@ class PlayerMultServer:
                 data = connection.socket.recv(BUFFER_SIZE)
                 if data:
                     packet_Id = Packer.readUnsingedShort(data[:2])
-                    packet = Packet.getPacketByID(packet_Id)(data[2:].decode())
-                    print(packet.data)
+                    packet = Packet.getPacketByID(packet_Id)(data[2:])
+
+                    if packet.__class__ == HandshakeRequestPaket:
+                        self.beginHandshake(connection, packet)
+
+                    logging.debug(f"[{connection.identifier} -> S] {packet.__class__.__name__}")
             sleep(0.05)
 
     def listen(self):
@@ -68,6 +80,7 @@ class PlayerMultServer:
 
     def tick(self):
         self.listen()
+        sleep(0.05)
 
     def start(self):
         logging.info("Starting Server...")
@@ -78,6 +91,6 @@ class PlayerMultServer:
         logging.info("Listening for connections...")
 
     def close(self):
-        logging.info("Closing Server...")
+        logging.info("Stopping Server...")
         self.running = False
         self.socket.close()
