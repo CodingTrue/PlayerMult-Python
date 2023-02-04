@@ -1,9 +1,17 @@
 import socket
 import logging
-from sys import stdout
 
+from time import sleep
+from threading import Thread
+from sys import stdout
+from utils.Packer import Packer
 from playermulttypes.SendType import SendType
 from network.Connection import Connection
+
+from packet.Packet import Packet
+from packet.NameTransferPacket import NameTransferPacket
+
+BUFFER_SIZE = 2048
 
 class PlayerMultServer:
     instance = None
@@ -25,10 +33,30 @@ class PlayerMultServer:
         self.socket.bind((self.ip, self.port))
         self.socket.settimeout(0.5)
 
+        self.running = False
+
         self.connections = []
+        self.dataProcessingThread = Thread(target=self.dataProcessing)
+
+    def registerPackets(self):
+        logging.info("Register Packets...")
+
+        Packet.registerPacket(0, NameTransferPacket)
+
+        logging.info("Registered Packets...")
 
     def addConnection(self, connection: Connection):
         self.connections.append(connection)
+
+    def dataProcessing(self):
+        while self.running:
+            for connection in self.connections:
+                data = connection.socket.recv(BUFFER_SIZE)
+                if data:
+                    packet_Id = Packer.readUnsingedShort(data[:2])
+                    packet = Packet.getPacketByID(packet_Id)(data[2:].decode())
+                    print(packet.data)
+            sleep(0.05)
 
     def listen(self):
         try:
@@ -41,18 +69,15 @@ class PlayerMultServer:
     def tick(self):
         self.listen()
 
-        for connection in self.connections:
-            data = connection.socket.recv(2048)
-
-            if not data: continue
-            else: logging.info(data.decode("utf-8"))
-
-
     def start(self):
         logging.info("Starting Server...")
+        self.running = True
+        self.registerPackets()
+        self.dataProcessingThread.start()
         self.socket.listen(self.maxConnectionCount)
         logging.info("Listening for connections...")
 
     def close(self):
         logging.info("Closing Server...")
+        self.running = False
         self.socket.close()
